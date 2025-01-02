@@ -57,7 +57,7 @@ def main():
         (
             "Enter individually",
             "Provide overall average & total points",
-            "Enter past semesters (averages & points)"
+            "Enter past semesters averages and credits (מהיר דרך גליון ציונים)"
         )
     )
 
