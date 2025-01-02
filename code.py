@@ -1,15 +1,17 @@
 import streamlit as st
+from itertools import combinations
 
 def calculate_weighted_average(courses):
     """
     Calculate and return the weighted average.
-    courses: list of tuples (grade, credits)
+    'courses' should be a list of (grade, credits).
+    If no courses or total_credits = 0, returns 0.0
     """
     if not courses:
         return 0.0
     
-    total_weighted = 0
-    total_credits = 0
+    total_weighted = 0.0
+    total_credits = 0.0
     
     for grade, credits in courses:
         total_weighted += grade * credits
@@ -20,28 +22,46 @@ def calculate_weighted_average(courses):
     
     return total_weighted / total_credits
 
+
+def compute_average_with_pass_subset(past_courses, current_sem_courses, pass_subset):
+    """
+    Given:
+      - past_courses: list of (grade, credits) for *past* courses
+      - current_sem_courses: list of (course_name, course_credits, course_grade)
+      - pass_subset: set of course names to treat as Pass (excluded from average)
+    
+    Return the resulting degree average.
+    """
+    # Convert current-sem courses to (grade, credits) *excluding* those in pass_subset
+    included_for_avg = []
+    for c_name, c_credits, c_grade in current_sem_courses:
+        if c_name not in pass_subset:
+            included_for_avg.append((c_grade, c_credits))
+    
+    # Combine with past courses
+    all_for_avg = past_courses + included_for_avg
+    
+    return calculate_weighted_average(all_for_avg)
+
+
 def main():
-    st.title("Binary Pass Maximization for Degree Average")
+    st.title("Binary Pass Maximization for Degree Average (Optimal Subset)")
 
     # ---------------------------------------------------------------
     # STEP 1: PAST COURSES
     # ---------------------------------------------------------------
     st.header("Step 1: Provide Your Past Courses Information")
 
-    # Options for providing past courses:
-    #  1) Enter individually
-    #  2) Provide overall average & total points
-    #  3) Enter past semesters (each with average & total points)
     past_course_option = st.radio(
         "Choose how to provide your past courses:",
         (
             "Enter individually",
             "Provide overall average & total points",
-            "Enter each past semester's total points and average (מהיר דרך גליון ציונים)"
+            "Enter past semesters (averages & points)"
         )
     )
 
-    # Will store (grade, credits) for either individual courses, aggregated data, or semester-aggregated data
+    # Will store (grade, credits) from whichever method the user chooses
     past_course_data = []
     
     # ---------------------------------------------------------------
@@ -74,7 +94,7 @@ def main():
                 )
             past_courses.append((course_name, course_credits, course_grade))
         
-        # Convert to (grade, credits) format
+        # Convert to (grade, credits) for average calculation
         past_course_data = [(c[2], c[1]) for c in past_courses]  # (grade, credits)
 
     # ---------------------------------------------------------------
@@ -90,7 +110,6 @@ def main():
             "Total credit points accumulated so far:",
             min_value=0.0, step=0.5
         )
-        # We'll treat this as one "aggregated" record
         if total_past_credits > 0:
             past_course_data = [(overall_past_average, total_past_credits)]
         else:
@@ -124,11 +143,9 @@ def main():
                     min_value=0.0, step=0.5, key=f"sem_credits_{i}"
                 )
             
-            # Accumulate
             total_weighted_sum += sem_avg * sem_credits
             total_credits_sum += sem_credits
         
-        # After collecting all semesters, compute overall average
         if total_credits_sum > 0:
             overall_average = total_weighted_sum / total_credits_sum
             past_course_data = [(overall_average, total_credits_sum)]
@@ -180,74 +197,56 @@ def main():
                 f"Grade for {course_name} (0-100):",
                 min_value=0, max_value=100, step=1, key=f"current_grade_{i}"
             )
-
         current_semester_courses.append((course_name, course_credits, course_grade))
 
     # ---------------------------------------------------------------
     # BUTTON TO PERFORM CALCULATION
     # ---------------------------------------------------------------
     if st.button("Calculate Optimal Pass/Fail"):
-        # -----------------------------------------------------------
-        # 1) Calculate the average if NO passes are applied
-        #    (all courses are counted with their numerical grades)
-        # -----------------------------------------------------------
-        no_pass_courses_for_average = []
-        for course_name, course_credits, course_grade in current_semester_courses:
-            no_pass_courses_for_average.append((course_grade, course_credits))
-        # Combine past + no-pass new courses
-        all_no_pass = past_course_data + no_pass_courses_for_average
-        no_pass_average = calculate_weighted_average(all_no_pass)
-        
-        # -----------------------------------------------------------
-        # 2) Identify all passing courses (grade >= 55) from this semester
-        # -----------------------------------------------------------
-        passing_courses = [
-            (n, cr, g) for (n, cr, g) in current_semester_courses if g >= 55
+        # 1) Average if NO passes are applied
+        no_pass_list = [
+            (c_grade, c_credits) for (c_name, c_credits, c_grade) in current_semester_courses
         ]
-        
-        # -----------------------------------------------------------
-        # 3) Sort passing courses by ascending grade
-        # -----------------------------------------------------------
-        passing_courses_sorted = sorted(passing_courses, key=lambda x: x[2])
-        
-        # -----------------------------------------------------------
-        # 4) Select as many as we are allowed to pass, from the lowest grade up
-        # -----------------------------------------------------------
-        courses_to_pass = passing_courses_sorted[:binary_passes_available]
-        courses_to_pass_names = {c[0] for c in courses_to_pass}
-        
-        # -----------------------------------------------------------
-        # 5) Build a new list of current semester courses for final average calculation
-        #    Exclude the "passed" ones from numerical average
-        # -----------------------------------------------------------
-        included_courses_for_average = []
-        for course_name, course_credits, course_grade in current_semester_courses:
-            if course_name not in courses_to_pass_names:
-                included_courses_for_average.append((course_grade, course_credits))
-        
-        # Combine with past courses data
-        all_courses_for_average = past_course_data + included_courses_for_average
-        
-        # -----------------------------------------------------------
-        # 6) Calculate new average (after pass/fail)
-        # -----------------------------------------------------------
-        new_average = calculate_weighted_average(all_courses_for_average)
-        
-        # -----------------------------------------------------------
-        # DISPLAY RESULTS
-        # -----------------------------------------------------------
+        all_no_pass = past_course_data + no_pass_list
+        pre_pass_average = calculate_weighted_average(all_no_pass)
+
+        # 2) Identify passing courses (grade >= 55)
+        passing_courses = [(n, cr, g) for (n, cr, g) in current_semester_courses if g >= 55]
+        passing_course_names = [pc[0] for pc in passing_courses]
+        pass_limit = min(len(passing_courses), binary_passes_available)
+
+        # 3) Try all subsets of the passing courses up to pass_limit
+        #    We'll keep track of the best average and subset
+        best_average = -1.0
+        best_subset = set()
+
+        # We'll pass from 0 up to pass_limit courses
+        for r in range(pass_limit + 1):
+            for combo in combinations(passing_course_names, r):
+                pass_subset = set(combo)
+                # Compute average if we pass these 'r' courses
+                candidate_avg = compute_average_with_pass_subset(
+                    past_courses=past_course_data,
+                    current_sem_courses=current_semester_courses,
+                    pass_subset=pass_subset
+                )
+                if candidate_avg > best_average:
+                    best_average = candidate_avg
+                    best_subset = pass_subset
+
+        # 4) Display results
         st.subheader("Results")
         st.write(f"**Current Average (Before This Semester)**: {current_average:.2f}")
-        st.write(f"**Average Pre-Binary Pass Application**: {no_pass_average:.2f}")
-        st.write(f"**New Average (After Optimal Binary Pass Application)**: {new_average:.2f}")
-        
-        # Show which courses were changed to Pass
-        if courses_to_pass_names:
-            st.write("**Courses Changed to Pass/Fail (no numerical grade)**:")
-            for c in courses_to_pass_names:
+        st.write(f"**Average Pre-Binary Pass Application (All Graded This Semester)**: {pre_pass_average:.2f}")
+        st.write(f"**New Average (After Optimal Binary Pass Application)**: {best_average:.2f}")
+
+        if best_subset:
+            st.write("**Courses Changed to Pass/Fail (no numerical grade):**")
+            for c in best_subset:
                 st.write(f"- {c}")
         else:
             st.write("No courses were changed to Pass/Fail.")
+
 
 if __name__ == "__main__":
     main()
